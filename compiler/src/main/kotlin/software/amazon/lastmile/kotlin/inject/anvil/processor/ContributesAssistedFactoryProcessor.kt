@@ -24,7 +24,6 @@ import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.ksp.addOriginatingKSFile
-import com.squareup.kotlinpoet.ksp.toAnnotationSpec
 import com.squareup.kotlinpoet.ksp.toClassName
 import com.squareup.kotlinpoet.ksp.toTypeName
 import com.squareup.kotlinpoet.ksp.writeTo
@@ -102,7 +101,7 @@ internal class ContributesAssistedFactoryProcessor(
                 boundAssistedFactory = it.assistedFactoryReturnType,
                 bindingMethodReturnType = it.bindingMethodReturnType,
                 assistedFactoryFunctionName = it.assistedFactoryFunctionName,
-                constructorParameters = constructorParameters
+                constructorParameters = constructorParameters,
             )
         }
 
@@ -147,7 +146,7 @@ internal class ContributesAssistedFactoryProcessor(
                                     addParameter(
                                         ParameterSpec.builder(
                                             "realFactory",
-                                            realAssistedFactory
+                                            realAssistedFactory,
                                         ).build(),
                                     )
                                     addStatement(
@@ -175,7 +174,7 @@ internal class ContributesAssistedFactoryProcessor(
         boundAssistedFactory: ClassName,
         bindingMethodReturnType: ClassName,
         assistedFactoryFunctionName: String,
-        constructorParameters:  List<KSValueParameter>
+        constructorParameters: List<KSValueParameter>,
     ): TypeSpec {
         return TypeSpec.classBuilder("Default${boundAssistedFactory.simpleName}")
             .addModifiers(KModifier.PRIVATE)
@@ -187,13 +186,13 @@ internal class ContributesAssistedFactoryProcessor(
                     .build(),
             )
             .addProperty(
-                    PropertySpec.builder(
-                        "realFactory",
-                        realAssistedFactory,
-                    )
-                        .initializer("realFactory")
-                        .addModifiers(KModifier.PRIVATE)
-                        .build()
+                PropertySpec.builder(
+                    "realFactory",
+                    realAssistedFactory,
+                )
+                    .initializer("realFactory")
+                    .addModifiers(KModifier.PRIVATE)
+                    .build(),
             )
             .addSuperinterface(boundAssistedFactory)
             .addFunction(
@@ -206,13 +205,17 @@ internal class ContributesAssistedFactoryProcessor(
                                 val paramName = param.name!!.asString()
                                 val paramType = param.type.resolve().toTypeName()
                                 ParameterSpec.builder(paramName, paramType).build()
-                            }
+                            },
                     )
                     .addStatement(
-                        "return realFactory(${constructorParameters.filter { it.isAnnotationPresent(Assisted::class) }.joinToString { it.name!!.asString() }})"
+                        "return realFactory(${constructorParameters.filter {
+                            it.isAnnotationPresent(
+                                Assisted::class,
+                            )
+                        }.joinToString { it.name!!.asString() }})",
                     )
                     .returns(bindingMethodReturnType)
-                    .build()
+                    .build(),
 
             )
             .build()
@@ -249,7 +252,8 @@ internal class ContributesAssistedFactoryProcessor(
             ?.takeIf {
                 it.declaration.requireQualifiedName() != Unit::class.requireQualifiedName()
             } ?: throw IllegalArgumentException(
-            "Assisted factory type must be specified in the @ContributesAssistedFactory annotation.",
+            "Assisted factory type must be specified in " +
+                "the @ContributesAssistedFactory annotation.",
         )
     }
 

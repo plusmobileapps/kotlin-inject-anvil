@@ -16,5 +16,5 @@ public annotation class ContributesAssistedFactory(
      */
     val boundType: KClass<*> = Unit::class,
 
-    val assistedFactory: KClass<*>
+    val assistedFactory: KClass<*>,
 )

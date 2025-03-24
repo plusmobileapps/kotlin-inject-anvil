@@ -3,11 +3,8 @@ package software.amazon.lastmile.kotlin.inject.anvil.sample
 import me.tatarka.inject.annotations.Assisted
 import me.tatarka.inject.annotations.AssistedFactory
 import me.tatarka.inject.annotations.Inject
-import me.tatarka.inject.annotations.Provides
 import software.amazon.lastmile.kotlin.inject.anvil.AppScope
 import software.amazon.lastmile.kotlin.inject.anvil.ContributesAssistedFactory
-import software.amazon.lastmile.kotlin.inject.anvil.ContributesBinding
-import software.amazon.lastmile.kotlin.inject.anvil.ContributesTo
 import software.amazon.lastmile.kotlin.inject.anvil.SingleIn
 
 interface AssistedApplicationIdProvider {
@@ -22,24 +19,24 @@ interface AssistedApplicationIdProviderImplFactory {
     fun create(tag: String): AssistedApplicationIdProviderImpl
 }
 
-//@Inject
-//@ContributesBinding(AppScope::class, AssistedApplicationIdProviderFactory::class)
-//@SingleIn(AppScope::class)
-//class DefaultAssistedApplicationIdProviderFactory(
+// @Inject
+// @ContributesBinding(AppScope::class, AssistedApplicationIdProviderFactory::class)
+// @SingleIn(AppScope::class)
+// class DefaultAssistedApplicationIdProviderFactory(
 //    private val realFactory: (tag: String) -> AssistedApplicationIdProviderImpl
-//) : AssistedApplicationIdProviderFactory {
+// ) : AssistedApplicationIdProviderFactory {
 //    override fun create(id: String): AssistedApplicationIdProvider = realFactory(id)
-//}
+// }
 //
-//@ContributesTo(AppScope::class)
-//@SingleIn(AppScope::class)
-//interface ApplicationIdProviderFactoryComponent {
+// @ContributesTo(AppScope::class)
+// @SingleIn(AppScope::class)
+// interface ApplicationIdProviderFactoryComponent {
 //    @Provides
 //    fun providesFactory(
 //        @Assisted id: String,
 //        realFactory: (tag: String) -> AssistedApplicationIdProviderImpl,
 //    ): AssistedApplicationIdProvider
-//}
+// }
 
 /**
  * What needs to be bound.
@@ -57,7 +54,7 @@ interface AssistedApplicationIdProviderFactory {
 @SingleIn(AppScope::class)
 class AssistedApplicationIdProviderImpl(
     @Assisted val tag: String,
-    val applicationIdProvider: ApplicationIdProvider
+    val applicationIdProvider: ApplicationIdProvider,
 ) : AssistedApplicationIdProvider {
     override val id: String
         get() = "$tag: ${applicationIdProvider.appId}"
@@ -65,7 +62,7 @@ class AssistedApplicationIdProviderImpl(
 
 @Inject
 class Foo(
-    val factory: AssistedApplicationIdProviderFactory
+    val factory: AssistedApplicationIdProviderFactory,
 ) {
     fun bar() {
         val assisted = factory.createTheThing("example")

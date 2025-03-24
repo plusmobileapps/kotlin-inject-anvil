@@ -3,26 +3,23 @@
 package software.amazon.lastmile.kotlin.inject.anvil.processor
 
 import assertk.assertThat
-import assertk.assertions.contains
 import assertk.assertions.hasSize
 import assertk.assertions.isEqualTo
+import assertk.assertions.isTrue
 import com.tschuchort.compiletesting.JvmCompilationResult
-import com.tschuchort.compiletesting.KotlinCompilation.ExitCode.COMPILATION_ERROR
-import me.tatarka.inject.annotations.IntoSet
-import me.tatarka.inject.annotations.Provides
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
 import org.junit.jupiter.api.Test
 import software.amazon.lastmile.kotlin.inject.anvil.LOOKUP_PACKAGE
 import software.amazon.lastmile.kotlin.inject.anvil.compile
+import software.amazon.lastmile.kotlin.inject.anvil.componentInterface
 import software.amazon.lastmile.kotlin.inject.anvil.generatedComponent
-import software.amazon.lastmile.kotlin.inject.anvil.inner
-import software.amazon.lastmile.kotlin.inject.anvil.isAnnotatedWith
-import software.amazon.lastmile.kotlin.inject.anvil.isNotAnnotatedWith
+import software.amazon.lastmile.kotlin.inject.anvil.kotlinInjectComponent
+import software.amazon.lastmile.kotlin.inject.anvil.newComponent
 import software.amazon.lastmile.kotlin.inject.anvil.origin
 
 class ContributesAssistedFactoryProcessorTest {
     @Test
-    fun `a component interface is generate with assisted factory`() {
+    fun `a component interface is generated with contributes assisted factory`() {
         compile(
             """
             package software.amazon.test
@@ -46,26 +43,79 @@ class ContributesAssistedFactoryProcessorTest {
             interface BaseFactory {
                 fun create(id: String): Base
             }
-            """
+            """,
         ) {
             val component = impl.generatedComponent
 
-            assertThat(component.simpleName).isEqualTo("InjectImpl")
+            assertThat(component.packageName).isEqualTo(LOOKUP_PACKAGE)
+            assertThat(component.origin).isEqualTo(impl)
+
+            val method = component.declaredMethods.single()
+            assertThat(component.declaredMethods).hasSize(1)
+            assertThat(method.returnType).isEqualTo(baseFactory)
+            assertThat(method.name).isEqualTo("provideImplBase")
+
+            val parameter = method.parameters.single()
+            assertThat(method.parameters.size).isEqualTo(1)
+            assertThat(parameter.type).isEqualTo(realAssistedFactory)
         }
     }
 
-    private val JvmCompilationResult.base: Class<*>
-        get() = classLoader.loadClass("software.amazon.test.Base")
+    @Test
+    fun `the kotlin-inject component contains assisted factory binding`() {
+        compile(
+            """
+            package software.amazon.test
+    
+            import software.amazon.lastmile.kotlin.inject.anvil.ContributesAssistedFactory
+            import me.tatarka.inject.annotations.Inject
+            import me.tatarka.inject.annotations.Assisted
+            import software.amazon.lastmile.kotlin.inject.anvil.AppScope
+            import software.amazon.lastmile.kotlin.inject.anvil.MergeComponent
+            import software.amazon.lastmile.kotlin.inject.anvil.SingleIn
 
-    private val JvmCompilationResult.base2: Class<*>
-        get() = classLoader.loadClass("software.amazon.test.Base2")
+            interface Base
+
+            @Inject
+            @ContributesAssistedFactory(
+                scope = AppScope::class,
+                boundType = Base::class,
+                assistedFactory = BaseFactory::class,
+            )
+            class Impl(
+                @Assisted val id: String,
+            ) : Base   
+
+            interface BaseFactory {
+                fun create(id: String): Base
+            }
+
+            @MergeComponent(AppScope::class)
+            @SingleIn(AppScope::class)
+            interface ComponentInterface {
+                val baseFactory: BaseFactory
+            }
+            """,
+        ) {
+            val component = componentInterface.kotlinInjectComponent.newComponent<Any>()
+
+            val implValue = component::class.java.methods
+                .single { it.name == "provideImplBase" }
+                .invoke(component, { id: String -> })
+
+            assertThat(defaultBaseFactory.isInstance(implValue)).isTrue()
+        }
+    }
+
+    private val JvmCompilationResult.baseFactory: Class<*>
+        get() = classLoader.loadClass("software.amazon.test.BaseFactory")
+
+    private val JvmCompilationResult.defaultBaseFactory: Class<*>
+        get() = classLoader.loadClass("amazon.lastmile.inject.DefaultBaseFactory")
 
     private val JvmCompilationResult.impl: Class<*>
         get() = classLoader.loadClass("software.amazon.test.Impl")
 
-    private val JvmCompilationResult.factoryImpl: Class<*>
-        get() = classLoader.loadClass("software.amazon.test.BaseFactoryImpl")
-
-    private val JvmCompilationResult.impl2: Class<*>
-        get() = classLoader.loadClass("software.amazon.test.Impl2")
+    private val JvmCompilationResult.realAssistedFactory: Class<*>
+        get() = classLoader.loadClass("kotlin.jvm.functions.Function1")
 }
