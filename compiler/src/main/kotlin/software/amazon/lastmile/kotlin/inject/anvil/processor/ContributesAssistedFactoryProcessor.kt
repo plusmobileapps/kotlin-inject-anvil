@@ -14,15 +14,19 @@ import com.google.devtools.ksp.symbol.KSAnnotation
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSFunctionDeclaration
 import com.google.devtools.ksp.symbol.KSType
+import com.google.devtools.ksp.symbol.KSValueParameter
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
+import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.ParameterSpec
+import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.ksp.addOriginatingKSFile
 import com.squareup.kotlinpoet.ksp.toAnnotationSpec
 import com.squareup.kotlinpoet.ksp.toClassName
+import com.squareup.kotlinpoet.ksp.toTypeName
 import com.squareup.kotlinpoet.ksp.writeTo
 import me.tatarka.inject.annotations.Assisted
 import me.tatarka.inject.annotations.IntoSet
@@ -31,8 +35,6 @@ import software.amazon.lastmile.kotlin.inject.anvil.ContextAware
 import software.amazon.lastmile.kotlin.inject.anvil.ContributesAssistedFactory
 import software.amazon.lastmile.kotlin.inject.anvil.LOOKUP_PACKAGE
 import software.amazon.lastmile.kotlin.inject.anvil.addOriginAnnotation
-import software.amazon.lastmile.kotlin.inject.anvil.argumentOfTypeAt
-import software.amazon.lastmile.kotlin.inject.anvil.decapitalize
 import software.amazon.lastmile.kotlin.inject.anvil.requireQualifiedName
 import kotlin.reflect.KClass
 
@@ -65,7 +67,16 @@ internal class ContributesAssistedFactoryProcessor(
         val constructor = clazz.getConstructors().firstOrNull { constructor ->
             constructor.parameters.any { it.isAnnotationPresent(Assisted::class) }
         } ?: throw IllegalArgumentException(
-            "No constructor with @Assisted found in ${clazz.simpleName.asString()}"
+            "No constructor with @Assisted found in ${clazz.simpleName.asString()}",
+        )
+        val constructorParameters = constructor.parameters
+
+        val realAssistedFactory = LambdaTypeName.get(
+            parameters = constructorParameters
+                .filter { it.isAnnotationPresent(Assisted::class) }
+                .map { it.type.toTypeName() }
+                .toTypedArray(),
+            returnType = clazz.toClassName(),
         )
 
         val annotations = clazz.findAnnotationsAtLeastOne(ContributesAssistedFactory::class)
@@ -85,11 +96,27 @@ internal class ContributesAssistedFactoryProcessor(
                 it.bindingMethodReturnType.canonicalName
             }
 
+        val defaultAssistedFactory = boundTypes.first().let {
+            createDefaultAssistedFactory(
+                realAssistedFactory = realAssistedFactory,
+                boundAssistedFactory = it.assistedFactoryReturnType,
+                bindingMethodReturnType = it.bindingMethodReturnType,
+                assistedFactoryFunctionName = it.assistedFactoryFunctionName,
+                constructorParameters = constructorParameters
+            )
+        }
+
         val fileSpec = FileSpec.builder(componentClassName)
             .apply {
                 boundTypes.forEach { function ->
-                    addImport(function.bindingMethodReturnType.packageName, function.bindingMethodReturnType.simpleName)
-                    addImport(function.assistedFactoryReturnType.packageName, function.assistedFactoryReturnType.simpleName)
+                    addImport(
+                        function.bindingMethodReturnType.packageName,
+                        function.bindingMethodReturnType.simpleName,
+                    )
+                    addImport(
+                        function.assistedFactoryReturnType.packageName,
+                        function.assistedFactoryReturnType.simpleName,
+                    )
                 }
             }
             .addType(
@@ -117,39 +144,18 @@ internal class ContributesAssistedFactoryProcessor(
                                     }
                                 }
                                 .apply {
-                                    val parameters = constructor.parameters
-                                        .filter { it.isAnnotationPresent(Assisted::class) }
-                                        .map { param ->
-                                        val paramName = param.name!!.asString()
-                                        val paramType = param.type.resolve().toClassName()
-                                        val paramAnnotations =
-                                            param.annotations.map { annotation ->
-                                                annotation.toAnnotationSpec()
-                                            }
-                                        ParameterSpec.builder(paramName, paramType).apply {
-                                            paramAnnotations.forEach { addAnnotation(it) }
-                                        }.build()
-                                    }
-                                    parameters.forEach { addParameter(it) }
                                     addParameter(
                                         ParameterSpec.builder(
                                             "realFactory",
-                                            LambdaTypeName.get(
-                                                parameters = parameters
-                                                    .map { it.type }
-                                                    .toTypedArray(),
-                                                returnType = clazz.toClassName(),
-                                            )
-                                        ).build()
+                                            realAssistedFactory
+                                        ).build(),
                                     )
                                     addStatement(
                                         """
-                                            return object : ${function.assistedFactoryReturnType.simpleName} {
-                                                override fun ${function.assistedFactoryFunctionName}(${parameters.joinToString("\n") { "${it.name}: ${it.type}" }}): ${function.bindingMethodReturnType.simpleName} {
-                                                    return realFactory(${parameters.joinToString { it.name }})
-                                                }
-                                            }
-                                        """.trimIndent()
+                                            return Default${function.assistedFactoryReturnType.simpleName}(
+                                                realFactory = realFactory
+                                            )
+                                        """.trimIndent(),
                                     )
                                 }
                                 .returns(function.assistedFactoryReturnType)
@@ -158,9 +164,58 @@ internal class ContributesAssistedFactoryProcessor(
                     )
                     .build(),
             )
+            .addType(defaultAssistedFactory)
             .build()
 
         fileSpec.writeTo(codeGenerator, aggregating = false)
+    }
+
+    private fun createDefaultAssistedFactory(
+        realAssistedFactory: LambdaTypeName,
+        boundAssistedFactory: ClassName,
+        bindingMethodReturnType: ClassName,
+        assistedFactoryFunctionName: String,
+        constructorParameters:  List<KSValueParameter>
+    ): TypeSpec {
+        return TypeSpec.classBuilder("Default${boundAssistedFactory.simpleName}")
+            .addModifiers(KModifier.PRIVATE)
+            .primaryConstructor(
+                FunSpec.constructorBuilder()
+                    .addParameter(
+                        ParameterSpec.builder("realFactory", realAssistedFactory).build(),
+                    )
+                    .build(),
+            )
+            .addProperty(
+                    PropertySpec.builder(
+                        "realFactory",
+                        realAssistedFactory,
+                    )
+                        .initializer("realFactory")
+                        .addModifiers(KModifier.PRIVATE)
+                        .build()
+            )
+            .addSuperinterface(boundAssistedFactory)
+            .addFunction(
+                FunSpec.builder(assistedFactoryFunctionName)
+                    .addModifiers(KModifier.OVERRIDE)
+                    .addParameters(
+                        constructorParameters
+                            .filter { it.isAnnotationPresent(Assisted::class) }
+                            .map { param ->
+                                val paramName = param.name!!.asString()
+                                val paramType = param.type.resolve().toTypeName()
+                                ParameterSpec.builder(paramName, paramType).build()
+                            }
+                    )
+                    .addStatement(
+                        "return realFactory(${constructorParameters.filter { it.isAnnotationPresent(Assisted::class) }.joinToString { it.name!!.asString() }})"
+                    )
+                    .returns(bindingMethodReturnType)
+                    .build()
+
+            )
+            .build()
     }
 
     private fun checkNoDuplicateBoundTypes(
@@ -194,8 +249,8 @@ internal class ContributesAssistedFactoryProcessor(
             ?.takeIf {
                 it.declaration.requireQualifiedName() != Unit::class.requireQualifiedName()
             } ?: throw IllegalArgumentException(
-                "Assisted factory type must be specified in the @ContributesAssistedFactory annotation."
-            )
+            "Assisted factory type must be specified in the @ContributesAssistedFactory annotation.",
+        )
     }
 
     @Suppress("ReturnCount")
@@ -257,9 +312,10 @@ internal class ContributesAssistedFactoryProcessor(
         }
 
         val assistedFactoryFunctionName: String by lazy {
-            val classDeclaration = assistedFactory.declaration as? KSClassDeclaration ?: throw IllegalArgumentException(
-                "Assisted factory type must be a class."
-            )
+            val classDeclaration = assistedFactory.declaration as? KSClassDeclaration
+                ?: throw IllegalArgumentException(
+                    "Assisted factory type must be a class.",
+                )
             classDeclaration.getAllFunctions()
                 .map(KSFunctionDeclaration::simpleName)
                 .map { it.asString() }
