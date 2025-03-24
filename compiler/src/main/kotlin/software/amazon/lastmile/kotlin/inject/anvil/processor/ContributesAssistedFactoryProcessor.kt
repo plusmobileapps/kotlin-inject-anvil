@@ -28,7 +28,6 @@ import com.squareup.kotlinpoet.ksp.toClassName
 import com.squareup.kotlinpoet.ksp.toTypeName
 import com.squareup.kotlinpoet.ksp.writeTo
 import me.tatarka.inject.annotations.Assisted
-import me.tatarka.inject.annotations.IntoSet
 import me.tatarka.inject.annotations.Provides
 import software.amazon.lastmile.kotlin.inject.anvil.ContextAware
 import software.amazon.lastmile.kotlin.inject.anvil.ContributesAssistedFactory
@@ -70,98 +69,48 @@ internal class ContributesAssistedFactoryProcessor(
         )
         val constructorParameters = constructor.parameters
 
-        val realAssistedFactory = LambdaTypeName.get(
-            parameters = constructorParameters
-                .filter { it.isAnnotationPresent(Assisted::class) }
-                .map { it.type.toTypeName() }
-                .toTypedArray(),
-            returnType = clazz.toClassName(),
+        val realAssistedFactory: LambdaTypeName = createRealAssistedFactory(
+            constructorParameters = constructorParameters,
+            clazz = clazz,
         )
 
         val annotations = clazz.findAnnotationsAtLeastOne(ContributesAssistedFactory::class)
         checkNoDuplicateBoundTypes(clazz, annotations)
         checkReplacesHasSameScope(clazz, annotations)
 
-        val boundTypes = annotations
-            .map {
-                GeneratedFunction(
-                    boundType = boundType(clazz, it),
-                    assistedFactory = assistedFactoryFromAnnotation(it),
-                    multibinding = false,
-                )
-            }
-            .distinctBy {
-                // The bound type of the assisted factory.
-                it.bindingMethodReturnType.canonicalName
-            }
-
-        val defaultAssistedFactory = boundTypes.first().let {
-            createDefaultAssistedFactory(
-                realAssistedFactory = realAssistedFactory,
-                boundAssistedFactory = it.assistedFactoryReturnType,
-                bindingMethodReturnType = it.bindingMethodReturnType,
-                assistedFactoryFunctionName = it.assistedFactoryFunctionName,
-                constructorParameters = constructorParameters,
+        val generatedFunction = annotations.first().let {
+            GeneratedFunction(
+                boundType = boundType(clazz, it),
+                assistedFactory = assistedFactoryFromAnnotation(it),
             )
         }
 
+        val defaultAssistedFactory: TypeSpec = createDefaultAssistedFactory(
+            realAssistedFactory = realAssistedFactory,
+            boundAssistedFactory = generatedFunction.assistedFactoryReturnType,
+            bindingMethodReturnType = generatedFunction.bindingMethodReturnType,
+            assistedFactoryFunctionName = generatedFunction.assistedFactoryFunctionName,
+            constructorParameters = constructorParameters,
+        )
+
         val fileSpec = FileSpec.builder(componentClassName)
             .apply {
-                boundTypes.forEach { function ->
-                    addImport(
-                        function.bindingMethodReturnType.packageName,
-                        function.bindingMethodReturnType.simpleName,
-                    )
-                    addImport(
-                        function.assistedFactoryReturnType.packageName,
-                        function.assistedFactoryReturnType.simpleName,
-                    )
-                }
+                addImport(
+                    generatedFunction.bindingMethodReturnType.packageName,
+                    generatedFunction.bindingMethodReturnType.simpleName,
+                )
+                addImport(
+                    generatedFunction.assistedFactoryReturnType.packageName,
+                    generatedFunction.assistedFactoryReturnType.simpleName,
+                )
             }
             .addType(
-                TypeSpec
-                    .interfaceBuilder(componentClassName)
-                    .addOriginatingKSFile(clazz.requireContainingFile())
-                    .addOriginAnnotation(clazz)
-                    .addFunctions(
-                        boundTypes.map { function ->
-                            val multibindingSuffix = if (function.multibinding) {
-                                "Multibinding"
-                            } else {
-                                ""
-                            }
-                            FunSpec
-                                .builder(
-                                    "provide${clazz.innerClassNames()}" +
-                                        function.bindingMethodReturnType.simpleName +
-                                        multibindingSuffix,
-                                )
-                                .addAnnotation(Provides::class)
-                                .apply {
-                                    if (function.multibinding) {
-                                        addAnnotation(IntoSet::class)
-                                    }
-                                }
-                                .apply {
-                                    addParameter(
-                                        ParameterSpec.builder(
-                                            "realFactory",
-                                            realAssistedFactory,
-                                        ).build(),
-                                    )
-                                    addStatement(
-                                        """
-                                            return Default${function.assistedFactoryReturnType.simpleName}(
-                                                realFactory = realFactory
-                                            )
-                                        """.trimIndent(),
-                                    )
-                                }
-                                .returns(function.assistedFactoryReturnType)
-                                .build()
-                        },
-                    )
-                    .build(),
+                createComponent(
+                    componentClassName = componentClassName,
+                    clazz = clazz,
+                    function = generatedFunction,
+                    realAssistedFactory = realAssistedFactory,
+                ),
             )
             .addType(defaultAssistedFactory)
             .build()
@@ -169,6 +118,63 @@ internal class ContributesAssistedFactoryProcessor(
         fileSpec.writeTo(codeGenerator, aggregating = false)
     }
 
+    private fun createComponent(
+        componentClassName: ClassName,
+        clazz: KSClassDeclaration,
+        function: GeneratedFunction,
+        realAssistedFactory: LambdaTypeName,
+    ): TypeSpec = TypeSpec
+        .interfaceBuilder(componentClassName)
+        .addOriginatingKSFile(clazz.requireContainingFile())
+        .addOriginAnnotation(clazz)
+        .addFunction(
+            FunSpec
+                .builder(
+                    "provide${clazz.innerClassNames()}" +
+                        function.bindingMethodReturnType.simpleName,
+                )
+                .addAnnotation(Provides::class)
+                .apply {
+                    addParameter(
+                        ParameterSpec.builder(
+                            "realFactory",
+                            realAssistedFactory,
+                        ).build(),
+                    )
+                    addStatement(
+                        """
+                        return Default${function.assistedFactoryReturnType.simpleName}(
+                            realFactory = realFactory
+                        )
+                        """.trimIndent(),
+                    )
+                }
+                .returns(function.assistedFactoryReturnType)
+                .build(),
+        )
+        .build()
+
+    /**
+     * Create a lambda to represent the assisted factory provided by kotlin-inject.
+     *
+     * When marking an injectable class with @Assisted, kotlin-inject will generate a binding in
+     * lambda form to inject something that can create an instance.
+     */
+    private fun createRealAssistedFactory(
+        constructorParameters: List<KSValueParameter>,
+        clazz: KSClassDeclaration,
+    ): LambdaTypeName = LambdaTypeName.get(
+        parameters = constructorParameters
+            .filter { it.isAnnotationPresent(Assisted::class) }
+            .map { it.type.toTypeName() }
+            .toTypedArray(),
+        returnType = clazz.toClassName(),
+    )
+
+    /**
+     * Create a default assisted factory concreate class that implements the assisted factory
+     * interface provided in the @ContributesAssistedFactory annotation.
+     */
     private fun createDefaultAssistedFactory(
         realAssistedFactory: LambdaTypeName,
         boundAssistedFactory: ClassName,
@@ -208,11 +214,13 @@ internal class ContributesAssistedFactoryProcessor(
                             },
                     )
                     .addStatement(
-                        "return realFactory(${constructorParameters.filter {
-                            it.isAnnotationPresent(
-                                Assisted::class,
-                            )
-                        }.joinToString { it.name!!.asString() }})",
+                        "return realFactory(${
+                            constructorParameters.filter {
+                                it.isAnnotationPresent(
+                                    Assisted::class,
+                                )
+                            }.joinToString { it.name!!.asString() }
+                        })",
                     )
                     .returns(bindingMethodReturnType)
                     .build(),
@@ -306,7 +314,6 @@ internal class ContributesAssistedFactoryProcessor(
     private inner class GeneratedFunction(
         boundType: KSType,
         assistedFactory: KSType,
-        val multibinding: Boolean,
     ) {
         val bindingMethodReturnType: ClassName by lazy {
             boundType.toClassName()
@@ -324,14 +331,6 @@ internal class ContributesAssistedFactoryProcessor(
                 .map(KSFunctionDeclaration::simpleName)
                 .map { it.asString() }
                 .first()
-        }
-
-        fun getFunctionNamesFromInterface(type: KSType): List<String> {
-            val classDeclaration = type.declaration as? KSClassDeclaration ?: return emptyList()
-            return classDeclaration.getAllFunctions()
-                .map(KSFunctionDeclaration::simpleName)
-                .map { it.asString() }
-                .toList()
         }
     }
 }
