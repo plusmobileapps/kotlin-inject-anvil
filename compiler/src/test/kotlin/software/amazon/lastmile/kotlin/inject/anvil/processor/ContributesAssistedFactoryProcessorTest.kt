@@ -61,6 +61,48 @@ class ContributesAssistedFactoryProcessorTest {
     }
 
     @Test
+    fun `a component interface is generated with contributes assisted factory as nested interface`() {
+        compile(
+            """
+            package software.amazon.test
+    
+            import software.amazon.lastmile.kotlin.inject.anvil.ContributesAssistedFactory
+            import me.tatarka.inject.annotations.Inject
+            import me.tatarka.inject.annotations.Assisted
+
+            interface Base {
+                interface Factory {
+                    fun create(id: String): Base
+                }
+            }
+
+            @Inject
+            @ContributesAssistedFactory(
+                scope = Unit::class,
+                assistedFactory = Base.Factory::class,
+            )
+            class Impl(
+                @Assisted val id: String,
+            ) : Base
+            """,
+        ) {
+            val component = impl.generatedComponent
+
+            assertThat(component.packageName).isEqualTo(LOOKUP_PACKAGE)
+            assertThat(component.origin).isEqualTo(impl)
+
+            val method = component.declaredMethods.single()
+            assertThat(component.declaredMethods).hasSize(1)
+            assertThat(method.returnType).isEqualTo(nestedBaseFactory)
+            assertThat(method.name).isEqualTo("provideImplBase")
+
+            val parameter = method.parameters.single()
+            assertThat(method.parameters.size).isEqualTo(1)
+            assertThat(parameter.type).isEqualTo(realAssistedFactory)
+        }
+    }
+
+    @Test
     fun `the kotlin-inject component contains assisted factory binding`() {
         compile(
             """
@@ -108,8 +150,13 @@ class ContributesAssistedFactoryProcessorTest {
     private val JvmCompilationResult.baseFactory: Class<*>
         get() = classLoader.loadClass("software.amazon.test.BaseFactory")
 
+    private val JvmCompilationResult.nestedBaseFactory: Class<*>
+        get() = classLoader.loadClass("software.amazon.test.Base${'$'}Factory")
+
     private val JvmCompilationResult.defaultBaseFactory: Class<*>
-        get() = classLoader.loadClass("amazon.lastmile.inject.DefaultBaseFactory")
+        get() = classLoader.loadClass(
+            "amazon.lastmile.inject.SoftwareAmazonTestImpl${'$'}DefaultBaseFactory",
+        )
 
     private val JvmCompilationResult.impl: Class<*>
         get() = classLoader.loadClass("software.amazon.test.Impl")

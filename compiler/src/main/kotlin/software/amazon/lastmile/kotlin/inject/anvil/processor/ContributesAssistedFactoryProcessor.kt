@@ -88,14 +88,6 @@ internal class ContributesAssistedFactoryProcessor(
             )
         }
 
-        val defaultAssistedFactory: TypeSpec = createDefaultAssistedFactory(
-            realAssistedFactory = realAssistedFactory,
-            boundAssistedFactory = generatedFunction.assistedFactoryReturnType,
-            bindingMethodReturnType = generatedFunction.bindingMethodReturnType,
-            assistedFactoryFunctionName = generatedFunction.assistedFactoryFunctionName,
-            constructorParameters = constructorParameters,
-        )
-
         val fileSpec = FileSpec.builder(componentClassName)
             .apply {
                 addImport(
@@ -104,7 +96,7 @@ internal class ContributesAssistedFactoryProcessor(
                 )
                 addImport(
                     generatedFunction.assistedFactoryReturnType.packageName,
-                    generatedFunction.assistedFactoryReturnType.simpleName,
+                    generatedFunction.assistedFactoryReturnType.simpleNames.joinToString("."),
                 )
             }
             .addType(
@@ -113,9 +105,10 @@ internal class ContributesAssistedFactoryProcessor(
                     clazz = clazz,
                     function = generatedFunction,
                     realAssistedFactory = realAssistedFactory,
+                    constructorParameters = constructorParameters,
                 ),
             )
-            .addType(defaultAssistedFactory)
+//            .addType(defaultAssistedFactory)
             .build()
 
         fileSpec.writeTo(codeGenerator, aggregating = false)
@@ -126,6 +119,7 @@ internal class ContributesAssistedFactoryProcessor(
         clazz: KSClassDeclaration,
         function: GeneratedFunction,
         realAssistedFactory: LambdaTypeName,
+        constructorParameters: List<KSValueParameter>,
     ): TypeSpec = TypeSpec
         .interfaceBuilder(componentClassName)
         .addOriginatingKSFile(clazz.requireContainingFile())
@@ -154,6 +148,15 @@ internal class ContributesAssistedFactoryProcessor(
                 }
                 .returns(function.assistedFactoryReturnType)
                 .build(),
+        )
+        .addType(
+            createDefaultAssistedFactory(
+                realAssistedFactory = realAssistedFactory,
+                boundAssistedFactory = function.assistedFactoryReturnType,
+                bindingMethodReturnType = function.bindingMethodReturnType,
+                assistedFactoryFunctionName = function.assistedFactoryFunctionName,
+                constructorParameters = constructorParameters,
+            ),
         )
         .build()
 
@@ -352,7 +355,13 @@ internal class ContributesAssistedFactoryProcessor(
             boundType.toClassName()
         }
         val assistedFactoryReturnType: ClassName by lazy {
-            assistedFactory.toClassName()
+            if (assistedFactory.declaration.parentDeclaration != null) {
+                val parentClassName =
+                    buildClassName(assistedFactory.declaration as KSClassDeclaration)
+                ClassName(parentClassName.packageName, parentClassName.simpleNames)
+            } else {
+                assistedFactory.toClassName()
+            }
         }
 
         val assistedFactoryFunctionName: String by lazy {
@@ -364,6 +373,19 @@ internal class ContributesAssistedFactoryProcessor(
                 .map(KSFunctionDeclaration::simpleName)
                 .map { it.asString() }
                 .first()
+        }
+
+        private fun buildClassName(declaration: KSClassDeclaration): ClassName {
+            val parent = declaration.parentDeclaration
+            return if (parent is KSClassDeclaration) {
+                val parentClassName = buildClassName(parent)
+                ClassName(
+                    parentClassName.packageName,
+                    parentClassName.simpleNames + declaration.simpleName.asString(),
+                )
+            } else {
+                ClassName(declaration.packageName.asString(), declaration.simpleName.asString())
+            }
         }
     }
 }
