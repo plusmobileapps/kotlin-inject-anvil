@@ -108,7 +108,6 @@ internal class ContributesAssistedFactoryProcessor(
                     constructorParameters = constructorParameters,
                 ),
             )
-//            .addType(defaultAssistedFactory)
             .build()
 
         fileSpec.writeTo(codeGenerator, aggregating = false)
