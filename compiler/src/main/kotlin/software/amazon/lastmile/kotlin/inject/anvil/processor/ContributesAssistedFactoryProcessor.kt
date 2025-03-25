@@ -9,6 +9,7 @@ import com.google.devtools.ksp.processing.CodeGenerator
 import com.google.devtools.ksp.processing.KSPLogger
 import com.google.devtools.ksp.processing.Resolver
 import com.google.devtools.ksp.processing.SymbolProcessor
+import com.google.devtools.ksp.symbol.ClassKind
 import com.google.devtools.ksp.symbol.KSAnnotated
 import com.google.devtools.ksp.symbol.KSAnnotation
 import com.google.devtools.ksp.symbol.KSClassDeclaration
@@ -76,11 +77,13 @@ internal class ContributesAssistedFactoryProcessor(
 
         val annotations = clazz.findAnnotationsAtLeastOne(ContributesAssistedFactory::class)
         checkNoDuplicateBoundTypes(clazz, annotations)
-        checkReplacesHasSameScope(clazz, annotations)
+
+        val assistedFactoryType = assistedFactoryFromAnnotation(annotations.first())
+        checkIsSingleMethodInterface(assistedFactoryType)
 
         val generatedFunction = annotations.first().let {
             GeneratedFunction(
-                boundType = boundType(clazz, it),
+                boundType = getSingleMethodReturnType(assistedFactoryType)!!,
                 assistedFactory = assistedFactoryFromAnnotation(it),
             )
         }
@@ -234,7 +237,7 @@ internal class ContributesAssistedFactoryProcessor(
         annotations: List<KSAnnotation>,
     ) {
         annotations
-            .mapNotNull { boundTypeFromAnnotation(it) }
+            .mapNotNull { boundTypeFromAssistedFactory(it) }
             .map { it.declaration.requireQualifiedName() }
             .takeIf { it.isNotEmpty() }
             ?.reduce { previous, next ->
@@ -246,7 +249,7 @@ internal class ContributesAssistedFactoryProcessor(
             }
     }
 
-    private fun boundTypeFromAnnotation(annotation: KSAnnotation): KSType? {
+    private fun boundTypeFromAssistedFactory(annotation: KSAnnotation): KSType? {
         return annotation.arguments.firstOrNull { it.name?.asString() == "boundType" }
             ?.let { it.value as? KSType }
             ?.takeIf {
@@ -265,12 +268,42 @@ internal class ContributesAssistedFactoryProcessor(
         )
     }
 
+    private fun KSClassDeclaration.getAssistedFactoryInterfaceFunctions() = getAllFunctions()
+        .filterNot {
+            val simpleName = it.simpleName.asString()
+            simpleName == "equals" || simpleName == "hashCode" || simpleName == "toString"
+        }
+        .toList()
+
+    private fun checkIsSingleMethodInterface(type: KSType) {
+        val declaration = type.declaration
+        if (declaration is KSClassDeclaration && declaration.classKind == ClassKind.INTERFACE) {
+            val methods = declaration.getAssistedFactoryInterfaceFunctions()
+            check(methods.size == 1) {
+                "The assisted factory must have exactly one method."
+            }
+        } else {
+            throw IllegalArgumentException("The assisted factory must be an interface.")
+        }
+    }
+
+    private fun getSingleMethodReturnType(type: KSType): KSType? {
+        val declaration = type.declaration
+        if (declaration is KSClassDeclaration) {
+            val methods = declaration.getAssistedFactoryInterfaceFunctions()
+            if (methods.size == 1) {
+                return methods[0].returnType?.resolve()
+            }
+        }
+        return null
+    }
+
     @Suppress("ReturnCount")
     private fun boundType(
         clazz: KSClassDeclaration,
         annotation: KSAnnotation,
     ): KSType {
-        boundTypeFromAnnotation(annotation)?.let { return it }
+        boundTypeFromAssistedFactory(annotation)?.let { return it }
 
         // The bound type is not defined in the annotation, let's inspect the super types.
         val superTypes = clazz.superTypes

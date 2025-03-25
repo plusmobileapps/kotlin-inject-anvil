@@ -33,7 +33,6 @@ class ContributesAssistedFactoryProcessorTest {
             @Inject
             @ContributesAssistedFactory(
                 scope = Unit::class,
-                boundType = Base::class,
                 assistedFactory = BaseFactory::class,
             )
             class Impl(
@@ -79,7 +78,6 @@ class ContributesAssistedFactoryProcessorTest {
             @Inject
             @ContributesAssistedFactory(
                 scope = AppScope::class,
-                boundType = Base::class,
                 assistedFactory = BaseFactory::class,
             )
             class Impl(

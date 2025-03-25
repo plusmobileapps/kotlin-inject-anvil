@@ -61,12 +61,6 @@ public annotation class ContributesAssistedFactory(
     val scope: KClass<*>,
 
     /**
-     * The type that this class is bound to. When injecting [boundType] the concrete class will be
-     * this annotated class.
-     */
-    val boundType: KClass<*> = Unit::class,
-
-    /**
      * The assisted factory that will be used to create instances of the bound type.
      */
     val assistedFactory: KClass<*>,
