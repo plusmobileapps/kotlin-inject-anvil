@@ -20,7 +20,6 @@ import com.squareup.kotlinpoet.ksp.toClassName
 import com.squareup.kotlinpoet.ksp.writeTo
 import me.tatarka.inject.annotations.Component
 import software.amazon.lastmile.kotlin.inject.anvil.ContextAware
-import software.amazon.lastmile.kotlin.inject.anvil.ContributesAssistedFactory
 import software.amazon.lastmile.kotlin.inject.anvil.ContributesBinding
 import software.amazon.lastmile.kotlin.inject.anvil.ContributesSubcomponent
 import software.amazon.lastmile.kotlin.inject.anvil.ContributesTo
@@ -28,7 +27,6 @@ import software.amazon.lastmile.kotlin.inject.anvil.LOOKUP_PACKAGE
 import software.amazon.lastmile.kotlin.inject.anvil.MergeComponent
 import software.amazon.lastmile.kotlin.inject.anvil.OPTION_CONTRIBUTING_ANNOTATIONS
 import software.amazon.lastmile.kotlin.inject.anvil.extend.ContributingAnnotation
-import software.amazon.lastmile.kotlin.inject.anvil.internal.Origin
 import software.amazon.lastmile.kotlin.inject.anvil.internal.Subcomponent
 import software.amazon.lastmile.kotlin.inject.anvil.requireQualifiedName
 
@@ -66,7 +64,6 @@ internal class MergeComponentProcessor(
             sequenceOf(
                 ContributesTo::class,
                 ContributesBinding::class,
-                ContributesAssistedFactory::class,
                 ContributesSubcomponent::class,
                 ContributesSubcomponent.Factory::class,
                 ContributingAnnotation::class,
@@ -159,7 +156,6 @@ internal class MergeComponentProcessor(
 
         val componentInterfaces = resolver.getDeclarationsFromPackage(LOOKUP_PACKAGE)
             .filterIsInstance<KSClassDeclaration>()
-            .filter { it.isAnnotationPresent(Origin::class) }
             .filter { contributedInterface ->
                 val originChain = contributedInterface.originChain().toList()
 
